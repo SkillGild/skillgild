@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Account, billing or skill support
+    url: https://skillgild.dev/support
+    about: Questions about your account, Pro access, billing or a specific skill. Get help from the SkillGild support center.
+  - name: Report a security vulnerability
+    url: https://github.com/SkillGild/skillgild/security/advisories/new
+    about: Please report security issues privately, not as public issues.
+  - name: Documentation
+    url: https://skillgild.dev/docs
+    about: Setup guides for the SkillGild CLI, MCP, API and supported agents.

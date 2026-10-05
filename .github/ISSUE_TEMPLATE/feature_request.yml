@@ -1,0 +1,35 @@
+name: Feature request
+description: Suggest an improvement, a new integration or a new kind of skill.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check the [roadmap](https://skillgild.dev/docs/roadmap) first, since your idea may already be planned.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would you like to happen?
+    validations:
+      required: true
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Who is this for?
+      multiple: true
+      options:
+        - Developers using skills
+        - Creators publishing skills
+        - Teams and organizations
+        - AI agents and MCP clients
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?

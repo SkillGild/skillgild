@@ -1,0 +1,68 @@
+name: Bug report
+description: Something isn't working on skillgild.dev, in the CLI, the MCP connection or the API.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. **Never include API keys (`sg_live_…`), tokens, passwords, private files or the contents of paid skills.**
+        For account or billing questions, use the [support center](https://skillgild.dev/support) instead.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Website (skillgild.dev)
+        - skillgild CLI
+        - MCP connection
+        - REST API or client libraries
+        - A specific hosted skill
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      options:
+        - Claude Code
+        - Codex
+        - Cursor
+        - Gemini CLI
+        - Other MCP client
+        - Not applicable
+    validations:
+      required: true
+  - type: input
+    id: skill
+    attributes:
+      label: Skill slug (if relevant)
+      placeholder: e.g. academic-plotting
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug, and what you expected to happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `skillgild install … --agent …`
+        2. …
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output
+      description: Paste the error code and message, such as `quota_exceeded` or `invalid_input`. Remove anything sensitive.
+      render: shell
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: e.g. macOS 15, Ubuntu 24.04, Windows 11
