@@ -107,10 +107,21 @@ You set this up once per machine. After that, every skill is available to every 
 
 ### 1. Install the SkillGild CLI
 
-The `skillgild` CLI is both the sign-in tool and the local MCP server your agent talks to. See [Install the CLI](https://skillgild.dev/docs/marketplace#1-install-the-cli) for the current install method.
+The `skillgild` CLI is both the sign-in tool and the local MCP server your agent talks to. It is a single binary with no dependencies.
 
-> [!NOTE]
-> One-line installers and prebuilt binaries for macOS, Windows and Linux are [coming soon](https://skillgild.dev/docs/roadmap).
+macOS and Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/SkillGild/skillgild/main/scripts/install-cli.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/SkillGild/skillgild/main/scripts/install-cli.ps1 | iex
+```
+
+The installers download the latest [release](https://github.com/SkillGild/skillgild/releases) for your platform and check it against `checksums.txt` before installing. You can also download an archive from the releases page and put `skillgild` on your PATH.
 
 ### 2. Sign in
 
