@@ -337,6 +337,9 @@ func install(ctx context.Context, baseURL string, args []string) error {
 		}
 		return installFromSource(ctx, skill, skillDir, *force)
 	}
+	if skill.Mirror != nil {
+		return installHostedEngine(ctx, api, skill, skillDir, *force)
+	}
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		return fmt.Errorf("create skill directory %s: %w", skillDir, err)
 	}
@@ -438,6 +441,43 @@ func installFromMirror(ctx context.Context, api *agentclient.Client, skill agent
 	return nil
 }
 
+// installHostedEngine installs a hosted skill whose scripts run locally (last30days):
+// the mirror's files at the pinned commit, with the hosted wrapper as SKILL.md. The
+// upstream SKILL.md is not kept, so the instructions still come with each session.
+func installHostedEngine(ctx context.Context, api *agentclient.Client, skill agentclient.Skill, skillDir string, force bool) error {
+	data, err := api.DownloadSource(ctx, skill.Slug, maxMirrorArchive)
+	if err != nil {
+		return fmt.Errorf("download the scripts for %s: %w", skill.Slug, err)
+	}
+	sum := sha256.Sum256(data)
+	if got := hex.EncodeToString(sum[:]); got != skill.Mirror.SHA256 {
+		return fmt.Errorf("the scripts for %s failed the checksum check: got %s, expected %s", skill.Slug, got, skill.Mirror.SHA256)
+	}
+	tmp, err := os.MkdirTemp("", "skillgild-"+skill.Slug+"-")
+	if err != nil {
+		return fmt.Errorf("create temporary directory: %w", err)
+	}
+	defer os.RemoveAll(tmp)
+	if err := unpackMirror(data, tmp); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "SKILL.md"), []byte(wrapper(skill)), 0o644); err != nil {
+		return fmt.Errorf("write agent skill wrapper: %w", err)
+	}
+	if err := placeSkill(tmp, skillDir, force); err != nil {
+		return err
+	}
+	commit := skill.Mirror.Commit
+	if len(commit) > 12 {
+		commit = commit[:12]
+	}
+	fmt.Printf("Installed hosted wrapper and scripts at %s\n", skillDir)
+	fmt.Printf("Scripts: %s at commit %s, mirrored by SkillGild (checksum verified).\n", skill.SourceURL, commit)
+	printCommunityCredit(skill)
+	fmt.Println("The skill's instructions come with each session. Connect the SkillGild MCP server (`skillgild mcp`) in your agent to run the skill.")
+	return nil
+}
+
 // unpackMirror extracts a gzipped tar into dir, accepting only regular files and
 // directories whose cleaned paths stay inside dir.
 func unpackMirror(data []byte, dir string) error {
@@ -524,7 +564,9 @@ func printCommunityCredit(skill agentclient.Skill) {
 	if len(credit) > 0 {
 		fmt.Println(strings.Join(credit, ". ") + ".")
 	}
-	fmt.Println("This is a community skill: your agent runs the project's own instructions locally. SkillGild lists it and does not host or run it.")
+	if skill.DistributionMode == agentclient.DistributionOpenSource {
+		fmt.Println("This is a community skill: your agent runs the project's own instructions locally. SkillGild lists it and does not host or run it.")
+	}
 }
 
 // copyTree copies a directory tree, skipping .git directories and symbolic links.
@@ -592,6 +634,13 @@ func hybridWrapper(skill agentclient.Skill) string {
 		fmt.Fprintf(&tools, "- `%s`: %s\n", tool.Name, strings.Join(strings.Fields(tool.Description), " "))
 	}
 	description := strings.Join(strings.Fields(skill.Description), " ")
+	local := ""
+	if skill.Mirror != nil {
+		local = " Its scripts are installed in this directory: this directory is the `SKILL_DIR` the instructions refer to."
+	}
+	if len(skill.Tools) == 0 {
+		return fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n# %s\n\n%s. This skill runs in this coding agent with your own model. This local file is only an invocation guide.\n\nWhen the user's task matches this skill:\n\n1. Call the SkillGild MCP tool `skillgild_start_session` with skill ID `%s`. Starting a session uses one run from the user's allowance; calling it again while the session is open returns the same session at no cost. The result contains the skill's instructions for this session.\n2. Follow those instructions with your normal file and shell tools. This skill has no SkillGild server tools.%s\n3. Call `skillgild_end_session` when the task is done.\n\nDo not save the session instructions into the project or this skill directory.\n", skill.Slug, yamlQuote(description), skill.Name, access, skill.ID, local)
+	}
 	return fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n# %s\n\n%s. This skill runs in this coding agent with your own model; SkillGild runs its private server tools. This local file is only an invocation guide.\n\nWhen the user's task matches this skill:\n\n1. Call the SkillGild MCP tool `skillgild_start_session` with skill ID `%s`. Starting a session uses one run from the user's allowance; calling it again while the session is open returns the same session at no cost. The result contains the skill's instructions for this session and the tools below.\n2. Follow those instructions with your normal file and shell tools. Where they call for a SkillGild tool, use `skillgild_call_tool` with the session ID, the tool name and an input object matching the tool's schema.\n3. Call `skillgild_end_session` when the task is done.\n\nServer tools:\n\n%s\nTool input is sent to SkillGild and processed by SkillGild code only; no AI provider sees it. Do not send credentials or unrelated project files. Do not save the session instructions into the project or this skill directory.\n", skill.Slug, yamlQuote(description), skill.Name, access, skill.ID, tools.String())
 }
 
