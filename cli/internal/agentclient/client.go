@@ -44,7 +44,17 @@ type Skill struct {
 	InputSchema      json.RawMessage `json:"input_schema"`
 	RuntimeType      string          `json:"runtime_type"`
 	Tools            []ToolInfo      `json:"tools"`
+	// Provenance of a skill packaged from, or (for distribution_mode "open_source")
+	// installed from, a public repository. SourcePath is the folder holding SKILL.md.
+	SourceURL   string `json:"source_url"`
+	SourcePath  string `json:"source_path"`
+	License     string `json:"license"`
+	Attribution string `json:"attribution"`
 }
+
+// DistributionOpenSource marks a community skill: listed by SkillGild, maintained in a
+// public repository, installed from source and never run on SkillGild.
+const DistributionOpenSource = "open_source"
 
 // ToolInfo is the public interface of a hybrid skill's server tool.
 type ToolInfo struct {

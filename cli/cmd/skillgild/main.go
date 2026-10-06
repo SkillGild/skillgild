@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -259,7 +260,10 @@ func search(ctx context.Context, baseURL, query string) error {
 	}
 	for _, skill := range items {
 		access := "free"
-		if skill.IncludedInPro {
+		if skill.DistributionMode == agentclient.DistributionOpenSource {
+			// A community skill: free, installed from its public repository, never run here.
+			access = "source"
+		} else if skill.IncludedInPro {
 			access = "pro"
 		} else if skill.AccessTier == "paid" {
 			access = fmt.Sprintf("%s %.2f", skill.PriceCurrency, float64(skill.PriceAmountMinor)/100)
@@ -318,6 +322,9 @@ func install(ctx context.Context, baseURL string, args []string) error {
 	if _, err := os.Stat(skillDir); err == nil && !*force {
 		return fmt.Errorf("%s already exists; pass --force to replace it", skillDir)
 	}
+	if skill.DistributionMode == agentclient.DistributionOpenSource {
+		return installFromSource(ctx, skill, skillDir, *force)
+	}
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		return fmt.Errorf("create skill directory %s: %w", skillDir, err)
 	}
@@ -327,6 +334,104 @@ func install(ctx context.Context, baseURL string, args []string) error {
 	fmt.Printf("Installed hosted wrapper at %s\n", filepath.Join(skillDir, "SKILL.md"))
 	fmt.Println("The wrapper contains public metadata only. Connect the SkillGild MCP server (`skillgild mcp`) in your agent to run the skill.")
 	return nil
+}
+
+// installFromSource installs a community skill: a shallow clone of its public repository,
+// from which the folder holding SKILL.md is copied into the agent's skills directory.
+// Nothing beyond the listing comes from SkillGild, and nothing runs on SkillGild; the
+// agent reads the project's own instructions, under the project's own license.
+func installFromSource(ctx context.Context, skill agentclient.Skill, skillDir string, force bool) error {
+	page := fmt.Sprintf("https://skillgild.dev/skills/%s", skill.Slug)
+	if !strings.HasPrefix(skill.SourceURL, "https://") {
+		return fmt.Errorf("%s is a community skill without an https source repository on record; see %s", skill.Slug, page)
+	}
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		return fmt.Errorf("git is required to install %s from %s; install git, or follow the project's install steps on %s", skill.Slug, skill.SourceURL, page)
+	}
+	tmp, err := os.MkdirTemp("", "skillgild-"+skill.Slug+"-")
+	if err != nil {
+		return fmt.Errorf("create temporary directory: %w", err)
+	}
+	defer os.RemoveAll(tmp)
+
+	cloneCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	clone := exec.CommandContext(cloneCtx, gitPath, "clone", "--depth", "1", "--quiet", "--", skill.SourceURL, tmp)
+	clone.Stderr = os.Stderr
+	clone.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	if err := clone.Run(); err != nil {
+		return fmt.Errorf("clone %s: %w", skill.SourceURL, err)
+	}
+
+	src := tmp
+	if skill.SourcePath != "" {
+		src = filepath.Join(tmp, filepath.FromSlash(skill.SourcePath))
+		rel, err := filepath.Rel(tmp, src)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("the skill's source path leaves its repository; no files were written")
+		}
+	}
+	if _, err := os.Stat(filepath.Join(src, "SKILL.md")); err != nil {
+		return fmt.Errorf("%s has no SKILL.md at %q in %s, so it is not a plain skill folder (it may be a plugin or an installer); follow the project's own install steps on %s", skill.Name, skill.SourcePath, skill.SourceURL, page)
+	}
+	if force {
+		if err := os.RemoveAll(skillDir); err != nil {
+			return fmt.Errorf("replace %s: %w", skillDir, err)
+		}
+	}
+	if err := copyTree(src, skillDir); err != nil {
+		_ = os.RemoveAll(skillDir)
+		return fmt.Errorf("copy skill files: %w", err)
+	}
+
+	fmt.Printf("Installed %s from %s at %s\n", skill.Name, skill.SourceURL, skillDir)
+	var credit []string
+	if skill.License != "" {
+		credit = append(credit, "License: "+skill.License)
+	}
+	if skill.Attribution != "" {
+		credit = append(credit, "Credit: "+skill.Attribution)
+	}
+	if len(credit) > 0 {
+		fmt.Println(strings.Join(credit, ". ") + ".")
+	}
+	fmt.Println("This is a community skill: your agent runs the project's own instructions locally. SkillGild lists it and does not host or run it.")
+	return nil
+}
+
+// copyTree copies a directory tree, skipping .git directories and symbolic links.
+func copyTree(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return os.MkdirAll(dst, 0o755)
+		}
+		if entry.IsDir() && entry.Name() == ".git" {
+			return filepath.SkipDir
+		}
+		target := filepath.Join(dst, rel)
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o644)
+	})
 }
 
 func wrapper(skill agentclient.Skill) string {
@@ -497,9 +602,9 @@ func serveMCP(ctx context.Context, baseURL string) error {
 
 func newMCPServer(api *agentclient.Client) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "skillgild", Version: version}, &mcp.ServerOptions{
-		Instructions: "Discover SkillGild skills with skillgild_search_skills. Each skill has a runtime_type. prompt_pipeline skills run on SkillGild: call skillgild_run_skill, which sends the input to SkillGild and its configured AI provider. hybrid_tools skills run here, in this agent: call skillgild_start_session, follow the instructions it returns, call the listed server tools with skillgild_call_tool, and finish with skillgild_end_session. Server tools run SkillGild code only, with no AI provider. If a tool answers that the user is not signed in, ask the user to run `skillgild login` in a terminal, then call the tool again. Never pass credentials, secret values, or unrelated project files unless the user approved sharing them.",
+		Instructions: "Discover SkillGild skills with skillgild_search_skills. Each skill has a runtime_type. prompt_pipeline skills run on SkillGild: call skillgild_run_skill, which sends the input to SkillGild and its configured AI provider. hybrid_tools skills run here, in this agent: call skillgild_start_session, follow the instructions it returns, call the listed server tools with skillgild_call_tool, and finish with skillgild_end_session. Server tools run SkillGild code only, with no AI provider. Skills whose distribution_mode is open_source are community listings maintained in public repositories: they install into the user's agent with `skillgild install <slug>` and cannot be run or started through SkillGild, so point the user to the install command instead of calling skillgild_run_skill or skillgild_start_session for them. If a tool answers that the user is not signed in, ask the user to run `skillgild login` in a terminal, then call the tool again. Never pass credentials, secret values, or unrelated project files unless the user approved sharing them.",
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "skillgild_search_skills", Description: "Search SkillGild's public hosted skill catalog. Returns public metadata, access tier, version, and public input schema; never returns private prompts or implementation."}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
+	mcp.AddTool(server, &mcp.Tool{Name: "skillgild_search_skills", Description: "Search SkillGild's public skill catalog. Returns public metadata, access tier, version, and public input schema; never returns private prompts or implementation. Items with distribution_mode open_source are community skills listed with their source repository: they install from source with `skillgild install <slug>` and do not run on SkillGild."}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
 		Query string `json:"query" jsonschema:"optional search phrase for hosted skills"`
 	}) (*mcp.CallToolResult, any, error) {
 		items, err := api.Search(ctx, args.Query)
