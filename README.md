@@ -227,6 +227,8 @@ Explain each step in plain language and ask me before running any command.
 | `skillgild_call_tool` | Call one of that session's server tools |
 | `skillgild_end_session` | End the session |
 
+**Claude Desktop:** download [`skillgild.mcpb`](https://github.com/SkillGild/skillgild/releases/latest/download/skillgild.mcpb) and open it; Claude Desktop installs the server and asks for your API key. It is also listed in the [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.SkillGild/skillgild`.
+
 The source is in [`cli/`](cli/) (Go, MIT). Build it with `cd cli && go build ./cmd/skillgild`, or run it in a container with an API key from your [account](https://skillgild.dev/account):
 
 ```sh
