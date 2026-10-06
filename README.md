@@ -215,6 +215,25 @@ Please set up SkillGild for me by following https://skillgild.dev/docs/quickstar
 Explain each step in plain language and ask me before running any command.
 ```
 
+## The MCP server
+
+`skillgild mcp` is a local stdio MCP server. It gives your agent five tools:
+
+| Tool | What it does |
+| --- | --- |
+| `skillgild_search_skills` | Search the catalog by task |
+| `skillgild_run_skill` | Run a prompt skill and return its result |
+| `skillgild_start_session` | Start a session for a hybrid skill and receive its instructions |
+| `skillgild_call_tool` | Call one of that session's server tools |
+| `skillgild_end_session` | End the session |
+
+The source is in [`cli/`](cli/) (Go, MIT). Build it with `cd cli && go build ./cmd/skillgild`, or run it in a container with an API key from your [account](https://skillgild.dev/account):
+
+```sh
+docker build -t skillgild .
+docker run -i --rm -e SKILLGILD_API_KEY skillgild
+```
+
 ## How hosted skills work
 
 <p align="center">
