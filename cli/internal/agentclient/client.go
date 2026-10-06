@@ -50,6 +50,17 @@ type Skill struct {
 	SourcePath  string `json:"source_path"`
 	License     string `json:"license"`
 	Attribution string `json:"attribution"`
+	// Mirror, when set, is SkillGild's pinned copy of a community skill; the CLI installs
+	// from it (DownloadSource) instead of cloning SourceURL.
+	Mirror *Mirror `json:"mirror"`
+}
+
+// Mirror describes a community skill's archive in SkillGild's storage.
+type Mirror struct {
+	Commit    string `json:"commit"`
+	SHA256    string `json:"sha256"`
+	SizeBytes int64  `json:"size_bytes"`
+	FileCount int    `json:"file_count"`
 }
 
 // DistributionOpenSource marks a community skill: listed by SkillGild, maintained in a
@@ -257,6 +268,45 @@ func (c *Client) GetSkill(ctx context.Context, ref string) (Skill, error) {
 	var skill Skill
 	err := c.request(ctx, http.MethodGet, "/skills/"+url.PathEscape(ref), nil, false, "", &skill)
 	return skill, err
+}
+
+// DownloadSource fetches a community skill's mirror archive (a gzipped tar), refusing
+// one larger than maxBytes. The caller verifies it against Mirror.SHA256.
+func (c *Client) DownloadSource(ctx context.Context, ref string, maxBytes int64) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/skills/"+url.PathEscape(ref)+"/source", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request")
+	}
+	req.Header.Set("Accept", "application/gzip")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("SkillGild API at %s is unreachable: %w", c.BaseURL, unwrapURLError(err))
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		apiErr := &APIError{Status: resp.StatusCode}
+		var envelope struct {
+			Error *struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&envelope) == nil && envelope.Error != nil {
+			apiErr.Code, apiErr.Message = envelope.Error.Code, envelope.Error.Message
+		}
+		return nil, apiErr
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("download skill source: %w", err)
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("skill source is larger than %d MB", maxBytes>>20)
+	}
+	return data, nil
 }
 
 func (c *Client) Run(ctx context.Context, ref string, input map[string]any, idempotencyKey ...string) (RunResult, error) {

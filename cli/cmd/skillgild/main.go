@@ -1,12 +1,17 @@
 package main
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -323,6 +328,13 @@ func install(ctx context.Context, baseURL string, args []string) error {
 		return fmt.Errorf("%s already exists; pass --force to replace it", skillDir)
 	}
 	if skill.DistributionMode == agentclient.DistributionOpenSource {
+		if skill.Mirror != nil {
+			err := installFromMirror(ctx, api, skill, skillDir, *force)
+			if err == nil {
+				return nil
+			}
+			fmt.Fprintf(os.Stderr, "skillgild: the SkillGild mirror of %s could not be installed (%v); installing from %s instead.\n", skill.Slug, err, skill.SourceURL)
+		}
 		return installFromSource(ctx, skill, skillDir, *force)
 	}
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
@@ -375,6 +387,120 @@ func installFromSource(ctx context.Context, skill agentclient.Skill, skillDir st
 	if _, err := os.Stat(filepath.Join(src, "SKILL.md")); err != nil {
 		return fmt.Errorf("%s has no SKILL.md at %q in %s, so it is not a plain skill folder (it may be a plugin or an installer); follow the project's own install steps on %s", skill.Name, skill.SourcePath, skill.SourceURL, page)
 	}
+	if err := placeSkill(src, skillDir, force); err != nil {
+		return err
+	}
+	fmt.Printf("Installed %s from %s at %s\n", skill.Name, skill.SourceURL, skillDir)
+	printCommunityCredit(skill)
+	return nil
+}
+
+// Bounds on a mirror archive, matching what cmd/mirror-community will store.
+const (
+	maxMirrorArchive = 64 << 20
+	maxMirrorFiles   = 5000
+	maxMirrorBytes   = 64 << 20
+)
+
+// installFromMirror installs a community skill from SkillGild's pinned copy: the archive
+// is downloaded, checked against the checksum the API published, and unpacked (regular
+// files only, inside the skill folder) before it replaces anything.
+func installFromMirror(ctx context.Context, api *agentclient.Client, skill agentclient.Skill, skillDir string, force bool) error {
+	data, err := api.DownloadSource(ctx, skill.Slug, maxMirrorArchive)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(data)
+	if got := hex.EncodeToString(sum[:]); got != skill.Mirror.SHA256 {
+		return fmt.Errorf("checksum mismatch: got %s, expected %s", got, skill.Mirror.SHA256)
+	}
+	tmp, err := os.MkdirTemp("", "skillgild-"+skill.Slug+"-")
+	if err != nil {
+		return fmt.Errorf("create temporary directory: %w", err)
+	}
+	defer os.RemoveAll(tmp)
+	if err := unpackMirror(data, tmp); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "SKILL.md")); err != nil {
+		return fmt.Errorf("the mirror has no SKILL.md")
+	}
+	if err := placeSkill(tmp, skillDir, force); err != nil {
+		return err
+	}
+	commit := skill.Mirror.Commit
+	if len(commit) > 12 {
+		commit = commit[:12]
+	}
+	fmt.Printf("Installed %s at %s\n", skill.Name, skillDir)
+	fmt.Printf("Source: %s at commit %s, mirrored by SkillGild (checksum verified).\n", skill.SourceURL, commit)
+	printCommunityCredit(skill)
+	return nil
+}
+
+// unpackMirror extracts a gzipped tar into dir, accepting only regular files and
+// directories whose cleaned paths stay inside dir.
+func unpackMirror(data []byte, dir string) error {
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("read mirror: %w", err)
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	var files int
+	var total int64
+	for {
+		header, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read mirror: %w", err)
+		}
+		name := filepath.FromSlash(header.Name)
+		if name == "" || filepath.IsAbs(name) || !filepath.IsLocal(name) {
+			return fmt.Errorf("the mirror holds an unsafe path %q", header.Name)
+		}
+		target := filepath.Join(dir, name)
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return err
+			}
+			continue
+		case tar.TypeReg:
+		default:
+			continue // links and devices are never installed
+		}
+		files++
+		total += header.Size
+		if files > maxMirrorFiles || total > maxMirrorBytes {
+			return fmt.Errorf("the mirror is larger than %d files or %d MB", maxMirrorFiles, maxMirrorBytes>>20)
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		mode := os.FileMode(0o644)
+		if header.Mode&0o111 != 0 {
+			mode = 0o755
+		}
+		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(out, io.LimitReader(tr, header.Size))
+		if closeErr := out.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+// placeSkill copies a prepared skill folder into the agent's skills directory, replacing
+// an existing one only when force is set.
+func placeSkill(src, skillDir string, force bool) error {
 	if force {
 		if err := os.RemoveAll(skillDir); err != nil {
 			return fmt.Errorf("replace %s: %w", skillDir, err)
@@ -384,8 +510,10 @@ func installFromSource(ctx context.Context, skill agentclient.Skill, skillDir st
 		_ = os.RemoveAll(skillDir)
 		return fmt.Errorf("copy skill files: %w", err)
 	}
+	return nil
+}
 
-	fmt.Printf("Installed %s from %s at %s\n", skill.Name, skill.SourceURL, skillDir)
+func printCommunityCredit(skill agentclient.Skill) {
 	var credit []string
 	if skill.License != "" {
 		credit = append(credit, "License: "+skill.License)
@@ -397,7 +525,6 @@ func installFromSource(ctx context.Context, skill agentclient.Skill, skillDir st
 		fmt.Println(strings.Join(credit, ". ") + ".")
 	}
 	fmt.Println("This is a community skill: your agent runs the project's own instructions locally. SkillGild lists it and does not host or run it.")
-	return nil
 }
 
 // copyTree copies a directory tree, skipping .git directories and symbolic links.
