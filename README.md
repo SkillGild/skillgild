@@ -239,11 +239,11 @@ docker run -i --rm -e SKILLGILD_API_KEY skillgild
 ## How hosted skills work
 
 <p align="center">
-  <img src="https://skillgild.dev/learn/skills-vs-mcp-flow.svg" width="760" alt="How a SkillGild skill reaches your coding agent: Claude Code, Codex, Cursor or Gemini CLI talks to the local skillgild MCP server, which calls the hosted runtime over HTTPS, where the private skill runs. MCP is the connection; the skill is the method." />
+  <img src="https://media.skillgild.dev/media/site/learn/skills-vs-mcp-flow-880x360.svg" width="760" alt="How a SkillGild skill reaches your coding agent: Claude Code, Codex, Cursor or Gemini CLI talks to the local skillgild MCP server, which calls the hosted runtime over HTTPS, where the private skill runs. MCP is the connection; the skill is the method." />
 </p>
 
 <p align="center">
-  <img src="https://skillgild.dev/learn/run-lifecycle.svg" width="760" alt="Lifecycle of one hosted SkillGild run in four steps: authenticate and check access, validate input and reserve a run, run the skill, return the result. If any step fails, the reserved run is released." />
+  <img src="https://media.skillgild.dev/media/site/learn/run-lifecycle-880x340.svg" width="760" alt="Lifecycle of one hosted SkillGild run in four steps: authenticate and check access, validate input and reserve a run, run the skill, return the result. If any step fails, the reserved run is released." />
   <br />
   <sub>What happens on SkillGild's servers during one run. If any step fails, the reserved run is not counted.</sub>
 </p>
