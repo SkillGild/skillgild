@@ -18,6 +18,8 @@ Your agent calls them, SkillGild runs them.
 [**Pricing**](https://skillgild.dev/pricing) ·
 [**Learn**](https://skillgild.dev/learn)
 
+[![M8ven Score](https://m8ven.ai/badge/mcp/skillgild-skillgild-k644ng)](https://m8ven.ai/mcp/skillgild-skillgild-k644ng?s=readme)
+
 <a href="https://skillgild.dev">
   <img src="https://skillgild.dev/social-card.png" width="840" alt="SkillGild: Your agent is underqualified. Expert-built AI agent skills. Your agent calls them, SkillGild runs them." />
 </a>
