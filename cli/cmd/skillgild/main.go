@@ -90,6 +90,7 @@ func newClient(baseURL string, authenticated bool) (*agentclient.Client, error) 
 	if err != nil {
 		return nil, err
 	}
+	api.UserAgent = fmt.Sprintf("skillgild-cli/%s (%s/%s)", version, runtime.GOOS, runtime.GOARCH)
 	if authenticated {
 		api.LoadKey = agentclient.LoadAPIKey
 	}
@@ -472,7 +473,11 @@ func installHostedEngine(ctx context.Context, api *agentclient.Client, skill age
 		commit = commit[:12]
 	}
 	fmt.Printf("Installed hosted wrapper and scripts at %s\n", skillDir)
-	fmt.Printf("Scripts: %s at commit %s, mirrored by SkillGild (checksum verified).\n", skill.SourceURL, commit)
+	if skill.SourceURL != "" {
+		fmt.Printf("Scripts: %s at commit %s, mirrored by SkillGild (checksum verified).\n", skill.SourceURL, commit)
+	} else {
+		fmt.Printf("Scripts: release %s from SkillGild (checksum verified).\n", commit)
+	}
 	printCommunityCredit(skill)
 	fmt.Println("The skill's instructions come with each session. Connect the SkillGild MCP server (`skillgild mcp`) in your agent to run the skill.")
 	return nil
@@ -780,6 +785,7 @@ func newMCPServer(api *agentclient.Client) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "skillgild", Version: version}, &mcp.ServerOptions{
 		Instructions: "Discover SkillGild skills with skillgild_search_skills. Each skill has a runtime_type. prompt_pipeline skills run on SkillGild: call skillgild_run_skill, which sends the input to SkillGild and its configured AI provider. hybrid_tools skills run here, in this agent: call skillgild_start_session, follow the instructions it returns, call the listed server tools with skillgild_call_tool, and finish with skillgild_end_session. Server tools run SkillGild code only, with no AI provider. Skills whose distribution_mode is open_source are community listings maintained in public repositories: they install into the user's agent with `skillgild install <slug>` and cannot be run or started through SkillGild, so point the user to the install command instead of calling skillgild_run_skill or skillgild_start_session for them. If a tool answers that the user is not signed in, ask the user to run `skillgild login` in a terminal, then call the tool again. Never pass credentials, secret values, or unrelated project files unless the user approved sharing them.",
 	})
+	server.AddReceivingMiddleware(tagMCPClient)
 	mcp.AddTool(server, &mcp.Tool{Name: "skillgild_search_skills", Description: "Search SkillGild's public skill catalog. Returns public metadata, access tier, version, and public input schema; never returns private prompts or implementation. Items with distribution_mode open_source are community skills listed with their source repository: they install from source with `skillgild install <slug>` and do not run on SkillGild."}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
 		Query string `json:"query" jsonschema:"optional search phrase for hosted skills"`
 	}) (*mcp.CallToolResult, any, error) {
@@ -842,6 +848,23 @@ func newMCPServer(api *agentclient.Client) *mcp.Server {
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Session ended."}}}, map[string]any{"ended": true}, nil
 	})
 	return server
+}
+
+// tagMCPClient labels API calls with the MCP client that made them (Claude Code,
+// Cursor, Codex…), as named in its initialize handshake.
+func tagMCPClient(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		if session, ok := req.GetSession().(*mcp.ServerSession); ok {
+			if params := session.InitializeParams(); params != nil && params.ClientInfo != nil && params.ClientInfo.Name != "" {
+				agent := params.ClientInfo.Name
+				if params.ClientInfo.Version != "" {
+					agent += "/" + params.ClientInfo.Version
+				}
+				ctx = agentclient.WithAgent(ctx, agent)
+			}
+		}
+		return next(ctx, method, req)
+	}
 }
 
 func jsonToolResult(value any) *mcp.CallToolResult {

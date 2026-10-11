@@ -25,6 +25,8 @@ type Client struct {
 	// needs one. The MCP server uses it so that a `skillgild login` run after the
 	// agent started the server is picked up without restarting the agent.
 	LoadKey func() (string, error)
+	// UserAgent, when set, identifies the CLI build on every request.
+	UserAgent string
 
 	mu sync.Mutex
 }
@@ -177,6 +179,7 @@ func (c *Client) request(ctx context.Context, method, path string, body any, aut
 		return fmt.Errorf("create request")
 	}
 	req.Header.Set("Accept", "application/json")
+	c.setClientHeaders(req)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -278,6 +281,7 @@ func (c *Client) DownloadSource(ctx context.Context, ref string, maxBytes int64)
 		return nil, fmt.Errorf("create request")
 	}
 	req.Header.Set("Accept", "application/gzip")
+	c.setClientHeaders(req)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

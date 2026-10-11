@@ -20,6 +20,9 @@ func fakeAPI(t *testing.T, calls *[]string) *httptest.Server {
 		if r.Header.Get("Authorization") != "Bearer sg_live_test" {
 			t.Errorf("%s %s sent no API key", r.Method, r.URL.Path)
 		}
+		if got := r.Header.Get(agentclient.AgentHeader); got != "test/0" {
+			t.Errorf("%s %s sent agent %q, want the MCP client's test/0", r.Method, r.URL.Path, got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/skills/livecanvas/sessions":
