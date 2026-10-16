@@ -49,7 +49,11 @@ func connect(args []string) error {
 	}
 	target, ok := connectTargets[args[0]]
 	if !ok {
-		return fmt.Errorf("skillgild connect supports antigravity, antigravity-cli and cursor; for Claude Code, Codex and Gemini CLI use their own mcp add command (see https://skillgild.dev/docs/quickstart-agents)")
+		switch args[0] {
+		case "claude-code", "codex", "gemini-cli":
+			return fmt.Errorf("%s has its own mcp add command; see https://skillgild.dev/docs/quickstart-agents", args[0])
+		}
+		return fmt.Errorf("skillgild connect supports antigravity, antigravity-cli and cursor: %w", errNeedsNewer)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

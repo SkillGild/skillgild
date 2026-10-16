@@ -33,6 +33,7 @@ var version = "dev"
 var safeSkillSlug = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 func main() {
+	cleanupOldExecutable()
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
@@ -67,6 +68,8 @@ func main() {
 		err = endSession(ctx, baseURL, os.Args[2:])
 	case "connect":
 		err = connect(os.Args[2:])
+	case "update":
+		err = updateCommand(ctx)
 	case "mcp":
 		err = serveMCP(ctx, baseURL)
 	case "version", "-v", "--version":
@@ -74,9 +77,14 @@ func main() {
 	case "help", "-h", "--help":
 		usage()
 	default:
+		// A command this version does not know may come from a newer release.
+		updateAndRetry(ctx, os.Args[1:])
 		fmt.Fprintf(os.Stderr, "skillgild: unknown command %q\n\n", os.Args[1])
 		usage()
 		os.Exit(2)
+	}
+	if errors.Is(err, errNeedsNewer) {
+		updateAndRetry(ctx, os.Args[1:])
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skillgild:", err)
@@ -85,7 +93,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "SkillGild agent CLI\n\nUsage:\n  skillgild login\n  skillgild status\n  skillgild search [query]\n  skillgild install <skill-slug> [--agent shared|codex|cursor|claude-code|gemini-cli|antigravity|antigravity-cli] [--target path] [--force]\n  skillgild run <skill-id-or-slug> --input '{\"prompt\":\"...\"}' [--idempotency-key value]\n  skillgild session <skill-id-or-slug>\n  skillgild call <session-id> <tool> --input '{...}'\n  skillgild end <session-id>\n  skillgild connect antigravity|antigravity-cli|cursor\n  skillgild mcp\n  skillgild logout\n  skillgild version\n\nEnvironment:\n  SKILLGILD_API_URL   API endpoint (default "+defaultAPIURL+"; use http://localhost:8080/v1 for a local API)\n  SKILLGILD_API_KEY   use this API key instead of the one saved by `skillgild login`")
+	fmt.Fprintln(os.Stderr, "SkillGild agent CLI\n\nUsage:\n  skillgild login\n  skillgild status\n  skillgild search [query]\n  skillgild install <skill-slug> [--agent shared|codex|cursor|claude-code|gemini-cli|antigravity|antigravity-cli] [--target path] [--force]\n  skillgild run <skill-id-or-slug> --input '{\"prompt\":\"...\"}' [--idempotency-key value]\n  skillgild session <skill-id-or-slug>\n  skillgild call <session-id> <tool> --input '{...}'\n  skillgild end <session-id>\n  skillgild connect antigravity|antigravity-cli|cursor\n  skillgild mcp\n  skillgild update\n  skillgild logout\n  skillgild version\n\nEnvironment:\n  SKILLGILD_API_URL   API endpoint (default "+defaultAPIURL+"; use http://localhost:8080/v1 for a local API)\n  SKILLGILD_API_KEY   use this API key instead of the one saved by `skillgild login`\n  SKILLGILD_NO_AUTO_UPDATE=1  never update automatically when a command or --agent preset is unknown")
 }
 
 // newClient returns an API client. Signed-in clients load the credential lazily, so
@@ -360,7 +368,7 @@ func install(ctx context.Context, baseURL string, args []string) error {
 		}
 		var ok bool
 		if root, ok = agentSkillRoot(home, *agent); !ok {
-			return fmt.Errorf("unsupported agent preset %q; use shared, codex, cursor, claude-code, gemini-cli, antigravity, antigravity-cli, or --target", *agent)
+			return fmt.Errorf("unsupported agent preset %q; use shared, codex, cursor, claude-code, gemini-cli, antigravity, antigravity-cli, or --target: %w", *agent, errNeedsNewer)
 		}
 	}
 	if !filepath.IsAbs(root) {
