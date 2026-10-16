@@ -83,7 +83,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "SkillGild agent CLI\n\nUsage:\n  skillgild login\n  skillgild status\n  skillgild search [query]\n  skillgild install <skill-slug> [--agent shared|codex|cursor|claude-code|gemini-cli] [--target path] [--force]\n  skillgild run <skill-id-or-slug> --input '{\"prompt\":\"...\"}' [--idempotency-key value]\n  skillgild session <skill-id-or-slug>\n  skillgild call <session-id> <tool> --input '{...}'\n  skillgild end <session-id>\n  skillgild mcp\n  skillgild logout\n  skillgild version\n\nEnvironment:\n  SKILLGILD_API_URL   API endpoint (default "+defaultAPIURL+"; use http://localhost:8080/v1 for a local API)\n  SKILLGILD_API_KEY   use this API key instead of the one saved by `skillgild login`")
+	fmt.Fprintln(os.Stderr, "SkillGild agent CLI\n\nUsage:\n  skillgild login\n  skillgild status\n  skillgild search [query]\n  skillgild install <skill-slug> [--agent shared|codex|cursor|claude-code|gemini-cli|antigravity|antigravity-cli] [--target path] [--force]\n  skillgild run <skill-id-or-slug> --input '{\"prompt\":\"...\"}' [--idempotency-key value]\n  skillgild session <skill-id-or-slug>\n  skillgild call <session-id> <tool> --input '{...}'\n  skillgild end <session-id>\n  skillgild mcp\n  skillgild logout\n  skillgild version\n\nEnvironment:\n  SKILLGILD_API_URL   API endpoint (default "+defaultAPIURL+"; use http://localhost:8080/v1 for a local API)\n  SKILLGILD_API_KEY   use this API key instead of the one saved by `skillgild login`")
 }
 
 // newClient returns an API client. Signed-in clients load the credential lazily, so
@@ -306,6 +306,27 @@ func reportInstall(ctx context.Context, baseURL string, args []string) {
 	_ = api.ReportInstall(ctx, args[0], agent)
 }
 
+// agentSkillRoot is the personal skills folder each --agent preset installs into.
+// antigravity is the Antigravity IDE and app, antigravity-cli its command-line agent;
+// both also read a project's .agents/skills (use --target for that).
+func agentSkillRoot(home, agent string) (string, bool) {
+	switch agent {
+	case "shared", "codex":
+		return filepath.Join(home, ".agents", "skills"), true
+	case "cursor":
+		return filepath.Join(home, ".cursor", "skills"), true
+	case "claude-code":
+		return filepath.Join(home, ".claude", "skills"), true
+	case "gemini-cli":
+		return filepath.Join(home, ".gemini", "skills"), true
+	case "antigravity":
+		return filepath.Join(home, ".gemini", "config", "skills"), true
+	case "antigravity-cli":
+		return filepath.Join(home, ".gemini", "antigravity-cli", "skills"), true
+	}
+	return "", false
+}
+
 func install(ctx context.Context, baseURL string, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("provide a skill slug")
@@ -335,17 +356,9 @@ func install(ctx context.Context, baseURL string, args []string) error {
 		if err != nil {
 			return fmt.Errorf("find home directory")
 		}
-		switch *agent {
-		case "shared", "codex":
-			root = filepath.Join(home, ".agents", "skills")
-		case "cursor":
-			root = filepath.Join(home, ".cursor", "skills")
-		case "claude-code":
-			root = filepath.Join(home, ".claude", "skills")
-		case "gemini-cli":
-			root = filepath.Join(home, ".gemini", "skills")
-		default:
-			return fmt.Errorf("unsupported agent preset %q; use shared, codex, cursor, claude-code, gemini-cli, or --target", *agent)
+		var ok bool
+		if root, ok = agentSkillRoot(home, *agent); !ok {
+			return fmt.Errorf("unsupported agent preset %q; use shared, codex, cursor, claude-code, gemini-cli, antigravity, antigravity-cli, or --target", *agent)
 		}
 	}
 	if !filepath.IsAbs(root) {
