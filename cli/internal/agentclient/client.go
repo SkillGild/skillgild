@@ -313,6 +313,12 @@ func (c *Client) DownloadSource(ctx context.Context, ref string, maxBytes int64)
 	return data, nil
 }
 
+// ReportInstall tells SkillGild a skill was installed, so installs count toward event
+// leaderboards. It is best effort: callers ignore the error.
+func (c *Client) ReportInstall(ctx context.Context, ref, agent string) error {
+	return c.request(ctx, http.MethodPost, "/skills/"+url.PathEscape(ref)+"/installs", map[string]string{"agent": agent}, true, "", nil)
+}
+
 func (c *Client) Run(ctx context.Context, ref string, input map[string]any, idempotencyKey ...string) (RunResult, error) {
 	var result RunResult
 	key := ""

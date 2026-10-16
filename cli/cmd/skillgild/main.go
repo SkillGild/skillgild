@@ -54,6 +54,9 @@ func main() {
 		err = search(ctx, baseURL, strings.Join(os.Args[2:], " "))
 	case "install":
 		err = install(ctx, baseURL, os.Args[2:])
+		if err == nil {
+			reportInstall(ctx, baseURL, os.Args[2:])
+		}
 	case "run":
 		err = run(ctx, baseURL, os.Args[2:])
 	case "session":
@@ -277,6 +280,30 @@ func search(ctx context.Context, baseURL, query string) error {
 		fmt.Printf("%-24s %-8s %s — %s\n", skill.Slug, access, skill.Name, skill.Description)
 	}
 	return nil
+}
+
+// reportInstall tells SkillGild about a finished install so it counts toward event
+// leaderboards. It runs only when the user is signed in, never blocks or fails the
+// install, and sends nothing but the skill and the agent preset.
+func reportInstall(ctx context.Context, baseURL string, args []string) {
+	if len(args) == 0 {
+		return
+	}
+	agent := "shared"
+	for i, a := range args {
+		if a == "--agent" && i+1 < len(args) {
+			agent = args[i+1]
+		} else if strings.HasPrefix(a, "--agent=") {
+			agent = strings.TrimPrefix(a, "--agent=")
+		}
+	}
+	api, err := newClient(baseURL, true)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	_ = api.ReportInstall(ctx, args[0], agent)
 }
 
 func install(ctx context.Context, baseURL string, args []string) error {
