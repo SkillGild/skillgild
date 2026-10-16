@@ -65,6 +65,8 @@ func main() {
 		err = callTool(ctx, baseURL, os.Args[2:])
 	case "end":
 		err = endSession(ctx, baseURL, os.Args[2:])
+	case "connect":
+		err = connect(os.Args[2:])
 	case "mcp":
 		err = serveMCP(ctx, baseURL)
 	case "version", "-v", "--version":
@@ -83,7 +85,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "SkillGild agent CLI\n\nUsage:\n  skillgild login\n  skillgild status\n  skillgild search [query]\n  skillgild install <skill-slug> [--agent shared|codex|cursor|claude-code|gemini-cli|antigravity|antigravity-cli] [--target path] [--force]\n  skillgild run <skill-id-or-slug> --input '{\"prompt\":\"...\"}' [--idempotency-key value]\n  skillgild session <skill-id-or-slug>\n  skillgild call <session-id> <tool> --input '{...}'\n  skillgild end <session-id>\n  skillgild mcp\n  skillgild logout\n  skillgild version\n\nEnvironment:\n  SKILLGILD_API_URL   API endpoint (default "+defaultAPIURL+"; use http://localhost:8080/v1 for a local API)\n  SKILLGILD_API_KEY   use this API key instead of the one saved by `skillgild login`")
+	fmt.Fprintln(os.Stderr, "SkillGild agent CLI\n\nUsage:\n  skillgild login\n  skillgild status\n  skillgild search [query]\n  skillgild install <skill-slug> [--agent shared|codex|cursor|claude-code|gemini-cli|antigravity|antigravity-cli] [--target path] [--force]\n  skillgild run <skill-id-or-slug> --input '{\"prompt\":\"...\"}' [--idempotency-key value]\n  skillgild session <skill-id-or-slug>\n  skillgild call <session-id> <tool> --input '{...}'\n  skillgild end <session-id>\n  skillgild connect antigravity|antigravity-cli|cursor\n  skillgild mcp\n  skillgild logout\n  skillgild version\n\nEnvironment:\n  SKILLGILD_API_URL   API endpoint (default "+defaultAPIURL+"; use http://localhost:8080/v1 for a local API)\n  SKILLGILD_API_KEY   use this API key instead of the one saved by `skillgild login`")
 }
 
 // newClient returns an API client. Signed-in clients load the credential lazily, so
