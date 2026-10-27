@@ -209,7 +209,7 @@ Guide: [Add skills to a coding agent](https://skillgild.dev/learn/cli-agent-skil
 > [!TIP]
 > Apps launched from an IDE may not inherit your terminal's `PATH`, so use the absolute path from `command -v skillgild`. Never put an API key in MCP JSON or TOML, or in a repository. The MCP process reads its credential from the OS credential store.
 
-Restart or reload your agent session. You should then see the `skillgild_search_skills`, `skillgild_start_session`, `skillgild_call_tool` and `skillgild_end_session` tools.
+Restart or reload your agent session. You should then see the `skillgild_search_skills`, `skillgild_get_skill`, `skillgild_run_skill`, `skillgild_start_session`, `skillgild_call_tool` and `skillgild_end_session` tools.
 
 **Prefer to let your agent do the setup?** Paste this into Claude Code, Codex, Cursor or Gemini CLI:
 
@@ -220,11 +220,12 @@ Explain each step in plain language and ask me before running any command.
 
 ## The MCP server
 
-`skillgild mcp` is a local stdio MCP server. It gives your agent five tools:
+`skillgild mcp` is a local stdio MCP server. It gives your agent six tools:
 
 | Tool | What it does |
 | --- | --- |
 | `skillgild_search_skills` | Search the catalog by task |
+| `skillgild_get_skill` | Read one skill's public listing: access tier, input schema and server tools |
 | `skillgild_run_skill` | Run a prompt skill and return its result |
 | `skillgild_start_session` | Start a session for a hybrid skill and receive its instructions |
 | `skillgild_call_tool` | Call one of that session's server tools |
