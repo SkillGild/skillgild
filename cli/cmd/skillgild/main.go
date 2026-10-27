@@ -833,7 +833,7 @@ func serveMCP(ctx context.Context, baseURL string) error {
 
 func newMCPServer(api *agentclient.Client) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "skillgild", Version: version}, &mcp.ServerOptions{
-		Instructions: "Discover SkillGild skills with skillgild_search_skills. Each skill has a runtime_type. prompt_pipeline skills run on SkillGild: call skillgild_run_skill, which sends the input to SkillGild and its configured AI provider. hybrid_tools skills run here, in this agent: call skillgild_start_session, follow the instructions it returns, call the listed server tools with skillgild_call_tool, and finish with skillgild_end_session. Server tools run SkillGild code only, with no AI provider. Skills whose distribution_mode is open_source are community listings maintained in public repositories: they install into the user's agent with `skillgild install <slug>` and cannot be run or started through SkillGild, so point the user to the install command instead of calling skillgild_run_skill or skillgild_start_session for them. If a tool answers that the user is not signed in, ask the user to run `skillgild login` in a terminal, then call the tool again. Never pass credentials, secret values, or unrelated project files unless the user approved sharing them.",
+		Instructions: "Discover SkillGild skills with skillgild_search_skills, and read one skill's full listing with skillgild_get_skill. Each skill has a runtime_type. prompt_pipeline skills run on SkillGild: call skillgild_run_skill, which sends the input to SkillGild and its configured AI provider. hybrid_tools skills run here, in this agent: call skillgild_start_session, follow the instructions it returns, call the listed server tools with skillgild_call_tool, and finish with skillgild_end_session. Server tools run SkillGild code only, with no AI provider. Skills whose distribution_mode is open_source are community listings maintained in public repositories: they install into the user's agent with `skillgild install <slug>` and cannot be run or started through SkillGild, so point the user to the install command instead of calling skillgild_run_skill or skillgild_start_session for them. If a tool answers that the user is not signed in, ask the user to run `skillgild login` in a terminal, then call the tool again. Never pass credentials, secret values, or unrelated project files unless the user approved sharing them.",
 	})
 	server.AddReceivingMiddleware(tagMCPClient)
 	mcp.AddTool(server, &mcp.Tool{Name: "skillgild_search_skills", Description: "Search SkillGild's public skill catalog. Returns public metadata, access tier, version, and public input schema; never returns private prompts or implementation. Items with distribution_mode open_source are community skills listed with their source repository: they install from source with `skillgild install <slug>` and do not run on SkillGild."}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
@@ -844,6 +844,18 @@ func newMCPServer(api *agentclient.Client) *mcp.Server {
 			return nil, nil, err
 		}
 		return jsonToolResult(items), items, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "skillgild_get_skill", Description: "Get one SkillGild skill's public listing by ID or slug: runtime_type, access tier, free runs per month, whether Pro includes it, current version, public input schema and, for hybrid_tools skills, the server tools a session offers. Use it before skillgild_run_skill or skillgild_start_session to choose the right tool and build valid input. Needs no sign-in, uses no runs, and never returns private prompts or implementation."}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
+		SkillID string `json:"skill_id" jsonschema:"public SkillGild skill ID or slug"`
+	}) (*mcp.CallToolResult, any, error) {
+		if args.SkillID == "" {
+			return nil, nil, errors.New("skill_id is required")
+		}
+		skill, err := api.GetSkill(ctx, args.SkillID)
+		if err != nil {
+			return nil, nil, err
+		}
+		return jsonToolResult(skill), skill, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "skillgild_run_skill", Description: "Run a SkillGild prompt_pipeline skill by public ID/slug and JSON input. For hybrid_tools skills use skillgild_start_session instead. The input is sent to SkillGild's configured AI provider, may consume a free allowance or paid entitlement, and generated output is returned. Never send credentials or unrelated sensitive project data."}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
 		SkillID string         `json:"skill_id" jsonschema:"public SkillGild skill ID or slug"`

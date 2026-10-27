@@ -156,3 +156,44 @@ func TestHybridWrapperHoldsNoInstructions(t *testing.T) {
 		t.Error("a hybrid wrapper must not point the agent at the hosted run tool")
 	}
 }
+
+func TestMCPGetSkillNeedsNoCredential(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"id":"skill-id","slug":"livecanvas","name":"LiveCanvas","access_tier":"paid","included_in_pro":true,"runtime_type":"hybrid_tools","current_version":"1.1.0","tools":[{"name":"validate_series","title":"Validate","description":"Checks data.json","input_schema":{"type":"object"}}]}}`))
+	}))
+	defer server.Close()
+	api, err := agentclient.New(server.URL+"/v1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	if _, err := newMCPServer(api).Connect(ctx, serverTransport, nil); err != nil {
+		t.Fatal(err)
+	}
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil).Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "skillgild_get_skill", Arguments: map[string]any{"skill_id": "livecanvas"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("get_skill returned an error: %+v", result.Content)
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	for _, want := range []string{`"runtime_type": "hybrid_tools"`, `"included_in_pro": true`, `"name": "validate_series"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("skill result is missing %s:\n%s", want, text)
+		}
+	}
+	if strings.Join(calls, "\n") != "GET /v1/skills/livecanvas" {
+		t.Fatalf("API calls: %v", calls)
+	}
+}
