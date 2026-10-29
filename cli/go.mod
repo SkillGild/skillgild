@@ -4,7 +4,9 @@ go 1.26.0
 
 require (
 	github.com/99designs/keyring v1.2.2
+	github.com/mattn/go-isatty v0.0.24
 	github.com/modelcontextprotocol/go-sdk v1.8.0
+	github.com/pelletier/go-toml/v2 v2.4.3
 )
 
 require (

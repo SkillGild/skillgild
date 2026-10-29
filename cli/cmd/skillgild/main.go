@@ -45,6 +45,8 @@ func main() {
 	}
 	var err error
 	switch os.Args[1] {
+	case "setup":
+		err = setup(ctx, baseURL, os.Args[2:])
 	case "login":
 		err = login(ctx, baseURL)
 	case "logout":
@@ -55,9 +57,6 @@ func main() {
 		err = search(ctx, baseURL, strings.Join(os.Args[2:], " "))
 	case "install":
 		err = install(ctx, baseURL, os.Args[2:])
-		if err == nil {
-			reportInstall(ctx, baseURL, os.Args[2:])
-		}
 	case "run":
 		err = run(ctx, baseURL, os.Args[2:])
 	case "session":
@@ -93,7 +92,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "SkillGild agent CLI\n\nUsage:\n  skillgild login\n  skillgild status\n  skillgild search [query]\n  skillgild install <skill-slug> [--agent shared|codex|cursor|claude-code|gemini-cli|antigravity|antigravity-cli] [--target path] [--force]\n  skillgild run <skill-id-or-slug> --input '{\"prompt\":\"...\"}' [--idempotency-key value]\n  skillgild session <skill-id-or-slug>\n  skillgild call <session-id> <tool> --input '{...}'\n  skillgild end <session-id>\n  skillgild connect antigravity|antigravity-cli|cursor\n  skillgild mcp\n  skillgild update\n  skillgild logout\n  skillgild version\n\nEnvironment:\n  SKILLGILD_API_URL   API endpoint (default "+defaultAPIURL+"; use http://localhost:8080/v1 for a local API)\n  SKILLGILD_API_KEY   use this API key instead of the one saved by `skillgild login`\n  SKILLGILD_NO_AUTO_UPDATE=1  never update automatically when a command or --agent preset is unknown")
+	fmt.Fprintln(os.Stderr, "SkillGild agent CLI\n\nUsage:\n  skillgild setup [--agent claude-code|codex|cursor|gemini-cli|antigravity|antigravity-cli]\n  skillgild login\n  skillgild status\n  skillgild search [query]\n  skillgild install <skill-slug> [--agent shared|codex|cursor|claude-code|gemini-cli|antigravity|antigravity-cli] [--target path] [--force] [--no-setup]\n  skillgild run <skill-id-or-slug> --input '{\"prompt\":\"...\"}' [--idempotency-key value]\n  skillgild session <skill-id-or-slug>\n  skillgild call <session-id> <tool> --input '{...}'\n  skillgild end <session-id>\n  skillgild connect claude-code|codex|cursor|gemini-cli|antigravity|antigravity-cli\n  skillgild mcp\n  skillgild update\n  skillgild logout\n  skillgild version\n\nEnvironment:\n  SKILLGILD_API_URL   API endpoint (default "+defaultAPIURL+"; use http://localhost:8080/v1 for a local API)\n  SKILLGILD_API_KEY   use this API key instead of the one saved by `skillgild login`\n  SKILLGILD_NO_AUTO_UPDATE=1  never update automatically when a command or --agent preset is unknown")
 }
 
 // newClient returns an API client. Signed-in clients load the credential lazily, so
@@ -338,14 +337,19 @@ func agentSkillRoot(home, agent string) (string, bool) {
 }
 
 func install(ctx context.Context, baseURL string, args []string) error {
+	return installWithSetup(ctx, baseURL, args, nil)
+}
+
+func installWithSetup(ctx context.Context, baseURL string, args []string, onboardingFlow *onboarding) (installErr error) {
 	if len(args) == 0 {
 		return fmt.Errorf("provide a skill slug")
 	}
 	ref := args[0]
 	flags := flag.NewFlagSet("install", flag.ContinueOnError)
-	agent := flags.String("agent", "shared", "skill directory preset")
+	agent := flags.String("agent", "auto", "agent preset (automatically detected for hosted skills)")
 	target := flags.String("target", "", "custom skill root directory")
 	force := flags.Bool("force", false, "replace an existing installed wrapper")
+	noSetup := flags.Bool("no-setup", false, "install files only; keep login and agent configuration unchanged")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -360,11 +364,40 @@ func install(ctx context.Context, baseURL string, args []string) error {
 	if !safeSkillSlug.MatchString(skill.Slug) {
 		return fmt.Errorf("the skill has an invalid install slug; no files were written")
 	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected install arguments: %s", strings.Join(flags.Args(), " "))
+	}
+	automaticSetup := skill.DistributionMode != agentclient.DistributionOpenSource && *target == "" && !*noSetup && *agent != "shared"
+	if automaticSetup {
+		if onboardingFlow == nil {
+			onboardingFlow, err = newOnboarding()
+			if err != nil {
+				return err
+			}
+		}
+		if *agent != "auto" {
+			if _, ok := agentSkillRoot(onboardingFlow.home, *agent); !ok {
+				return fmt.Errorf("unsupported agent preset %q: %w", *agent, errNeedsNewer)
+			}
+		}
+		selected, err := onboardingFlow.selectAgent(*agent)
+		if err != nil {
+			return err
+		}
+		*agent = selected
+	} else if *agent == "auto" {
+		*agent = "shared"
+	}
 	root := *target
 	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("find home directory")
+		var home string
+		if automaticSetup {
+			home = onboardingFlow.home
+		} else {
+			home, err = os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("find home directory")
+			}
 		}
 		var ok bool
 		if root, ok = agentSkillRoot(home, *agent); !ok {
@@ -378,6 +411,16 @@ func install(ctx context.Context, baseURL string, args []string) error {
 	if _, err := os.Stat(skillDir); err == nil && !*force {
 		return fmt.Errorf("%s already exists; pass --force to replace it", skillDir)
 	}
+	if automaticSetup {
+		if err := onboardingFlow.prepare(ctx, baseURL, *agent); err != nil {
+			return err
+		}
+	}
+	defer func() {
+		if installErr == nil {
+			reportInstall(ctx, baseURL, append(append([]string{}, args...), "--agent", *agent))
+		}
+	}()
 	if skill.DistributionMode == agentclient.DistributionOpenSource {
 		if skill.Mirror != nil {
 			err := installFromMirror(ctx, api, skill, skillDir, *force)
@@ -398,7 +441,11 @@ func install(ctx context.Context, baseURL string, args []string) error {
 		return fmt.Errorf("write agent skill wrapper: %w", err)
 	}
 	fmt.Printf("Installed hosted wrapper at %s\n", filepath.Join(skillDir, "SKILL.md"))
-	fmt.Println("The wrapper contains public metadata only. Connect the SkillGild MCP server (`skillgild mcp`) in your agent to run the skill.")
+	if automaticSetup {
+		fmt.Printf("Open your agent and ask it to use %s.\n", skill.Name)
+	} else {
+		fmt.Println("The wrapper contains public metadata only. Run `skillgild setup` to connect your agent if needed.")
+	}
 	return nil
 }
 
