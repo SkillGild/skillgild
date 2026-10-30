@@ -383,3 +383,51 @@ func (c *Client) Me(ctx context.Context) (map[string]any, error) {
 func (c *Client) Logout(ctx context.Context) error {
 	return c.request(ctx, http.MethodDelete, "/me/api-keys/current", nil, true, "", nil)
 }
+
+// PackMember is one skill of a pack, in install order.
+type PackMember struct {
+	Position         int    `json:"position"`
+	Slug             string `json:"slug"`
+	Name             string `json:"name"`
+	Version          string `json:"version"`
+	DistributionMode string `json:"distribution_mode"`
+	AccessTier       string `json:"access_tier"`
+	MirrorSHA256     string `json:"mirror_sha256"`
+	Starter          bool   `json:"starter"`
+}
+
+// Fingerprint identifies the files the member installs: the same value means the same files.
+func (m PackMember) Fingerprint() string { return m.Version + "|" + m.MirrorSHA256 }
+
+// Pack is what `skillgild pack install` installs.
+type Pack struct {
+	Slug     string       `json:"slug"`
+	Name     string       `json:"name"`
+	Tier     string       `json:"tier"`
+	Revision string       `json:"revision"`
+	Starter  string       `json:"starter"`
+	Members  []PackMember `json:"members"`
+}
+
+// PackEligibility says whether the signed-in account may install a pack.
+type PackEligibility struct {
+	Eligible   bool   `json:"eligible"`
+	Tier       string `json:"tier"`
+	Reason     string `json:"reason"`
+	UpgradeURL string `json:"upgrade_url"`
+}
+
+// GetPack reads a published pack's manifest. A pack with a missing or misconfigured
+// member answers 409 pack_unavailable rather than a shorter list.
+func (c *Client) GetPack(ctx context.Context, slug string) (Pack, error) {
+	var pack Pack
+	err := c.request(ctx, http.MethodGet, "/packs/"+url.PathEscape(slug), nil, false, "", &pack)
+	return pack, err
+}
+
+// PackEligibility asks whether the signed-in account may install the pack.
+func (c *Client) PackEligibility(ctx context.Context, slug string) (PackEligibility, error) {
+	var result PackEligibility
+	err := c.request(ctx, http.MethodGet, "/packs/"+url.PathEscape(slug)+"/eligibility", nil, true, "", &result)
+	return result, err
+}

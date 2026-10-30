@@ -57,6 +57,8 @@ func main() {
 		err = search(ctx, baseURL, strings.Join(os.Args[2:], " "))
 	case "install":
 		err = install(ctx, baseURL, os.Args[2:])
+	case "pack":
+		err = pack(ctx, baseURL, os.Args[2:])
 	case "run":
 		err = run(ctx, baseURL, os.Args[2:])
 	case "session":
@@ -92,7 +94,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "SkillGild agent CLI\n\nUsage:\n  skillgild setup [--agent claude-code|codex|cursor|gemini-cli|antigravity|antigravity-cli]\n  skillgild login\n  skillgild status\n  skillgild search [query]\n  skillgild install <skill-slug> [--agent shared|codex|cursor|claude-code|gemini-cli|antigravity|antigravity-cli] [--target path] [--force] [--no-setup]\n  skillgild run <skill-id-or-slug> --input '{\"prompt\":\"...\"}' [--idempotency-key value]\n  skillgild session <skill-id-or-slug>\n  skillgild call <session-id> <tool> --input '{...}'\n  skillgild end <session-id>\n  skillgild connect claude-code|codex|cursor|gemini-cli|antigravity|antigravity-cli\n  skillgild mcp\n  skillgild update\n  skillgild logout\n  skillgild version\n\nEnvironment:\n  SKILLGILD_API_URL   API endpoint (default "+defaultAPIURL+"; use http://localhost:8080/v1 for a local API)\n  SKILLGILD_API_KEY   use this API key instead of the one saved by `skillgild login`\n  SKILLGILD_NO_AUTO_UPDATE=1  never update automatically when a command or --agent preset is unknown")
+	fmt.Fprintln(os.Stderr, "SkillGild agent CLI\n\nUsage:\n  skillgild setup [--agent claude-code|codex|cursor|gemini-cli|antigravity|antigravity-cli]\n  skillgild login\n  skillgild status\n  skillgild search [query]\n  skillgild install <skill-slug> [--agent shared|codex|cursor|claude-code|gemini-cli|antigravity|antigravity-cli] [--target path] [--force] [--no-setup]\n  skillgild pack install <pack-slug> [--agent shared|codex|cursor|claude-code|gemini-cli|antigravity|antigravity-cli] [--target path] [--force] [--no-setup]\n  skillgild run <skill-id-or-slug> --input '{\"prompt\":\"...\"}' [--idempotency-key value]\n  skillgild session <skill-id-or-slug>\n  skillgild call <session-id> <tool> --input '{...}'\n  skillgild end <session-id>\n  skillgild connect claude-code|codex|cursor|gemini-cli|antigravity|antigravity-cli\n  skillgild mcp\n  skillgild update\n  skillgild logout\n  skillgild version\n\nEnvironment:\n  SKILLGILD_API_URL   API endpoint (default "+defaultAPIURL+"; use http://localhost:8080/v1 for a local API)\n  SKILLGILD_API_KEY   use this API key instead of the one saved by `skillgild login`\n  SKILLGILD_NO_AUTO_UPDATE=1  never update automatically when a command or --agent preset is unknown")
 }
 
 // newClient returns an API client. Signed-in clients load the credential lazily, so
@@ -437,7 +439,7 @@ func installWithSetup(ctx context.Context, baseURL string, args []string, onboar
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		return fmt.Errorf("create skill directory %s: %w", skillDir, err)
 	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(wrapper(skill)), 0o644); err != nil {
+	if err := writeConfigAtomically(filepath.Join(skillDir, "SKILL.md"), []byte(wrapper(skill)), 0o644); err != nil {
 		return fmt.Errorf("write agent skill wrapper: %w", err)
 	}
 	fmt.Printf("Installed hosted wrapper at %s\n", filepath.Join(skillDir, "SKILL.md"))
@@ -642,15 +644,39 @@ func unpackMirror(data []byte, dir string) error {
 
 // placeSkill copies a prepared skill folder into the agent's skills directory, replacing
 // an existing one only when force is set.
+// placeSkill puts a skill folder in place by staging it beside the destination and then
+// renaming it, so a failed copy never leaves a half-written skill, and a replacement
+// (force) keeps the folder it replaces until the new one is complete. The previous
+// folder is put back if the final rename fails.
 func placeSkill(src, skillDir string, force bool) error {
+	parent := filepath.Dir(skillDir)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", parent, err)
+	}
+	stage, err := os.MkdirTemp(parent, ".skillgild-stage-")
+	if err != nil {
+		return fmt.Errorf("stage skill files: %w", err)
+	}
+	defer os.RemoveAll(stage)
+	staged := filepath.Join(stage, "skill")
+	if err := copyTree(src, staged); err != nil {
+		return fmt.Errorf("copy skill files: %w", err)
+	}
+	previous := filepath.Join(stage, "previous")
+	replaced := false
 	if force {
-		if err := os.RemoveAll(skillDir); err != nil {
-			return fmt.Errorf("replace %s: %w", skillDir, err)
+		if _, err := os.Lstat(skillDir); err == nil {
+			if err := os.Rename(skillDir, previous); err != nil {
+				return fmt.Errorf("replace %s: %w", skillDir, err)
+			}
+			replaced = true
 		}
 	}
-	if err := copyTree(src, skillDir); err != nil {
-		_ = os.RemoveAll(skillDir)
-		return fmt.Errorf("copy skill files: %w", err)
+	if err := os.Rename(staged, skillDir); err != nil {
+		if replaced {
+			_ = os.Rename(previous, skillDir)
+		}
+		return fmt.Errorf("install skill files at %s: %w", skillDir, err)
 	}
 	return nil
 }
