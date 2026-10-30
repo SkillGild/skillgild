@@ -161,7 +161,7 @@ func packLookupError(slug string, err error) error {
 		case apiErr.Status == 404:
 			return fmt.Errorf("there is no published pack named %q; see https://skillgild.dev/collections for the available packs", slug)
 		case apiErr.Code == "pack_unavailable":
-			return fmt.Errorf("the %s pack cannot be installed right now, and nothing was changed: %s", slug, strings.TrimPrefix(apiErr.Message, "pack unavailable: "))
+			return fmt.Errorf("the pack %s cannot be installed right now, and nothing was changed: %s", slug, strings.TrimPrefix(apiErr.Message, "pack unavailable: "))
 		}
 	}
 	return err
@@ -275,7 +275,7 @@ func packInstallWith(ctx context.Context, baseURL string, args []string, deps pa
 		record.Members = map[string]packMemberReceipt{}
 	}
 
-	fmt.Printf("Installing the %s pack (%d skills) into %s\n", pack.Name, len(pack.Members), root)
+	fmt.Printf("Installing %s (%d skills) into %s\n", pack.Name, len(pack.Members), root)
 	var installed, updated, current, conflicts, failed int
 	for _, member := range pack.Members {
 		dir := filepath.Join(root, member.Slug)
@@ -341,7 +341,7 @@ func packInstallWith(ctx context.Context, baseURL string, args []string, deps pa
 		if err := savePackReceipt(receipt); err != nil {
 			fmt.Fprintf(os.Stderr, "skillgild: could not save the install record: %v\n", err)
 		}
-		fmt.Printf("The %s pack is installed (revision %s): %d new, %d updated, %d already up to date.\n", pack.Name, pack.Revision, installed, updated, current)
+		fmt.Printf("%s is installed (revision %s): %d new, %d updated, %d already up to date.\n", pack.Name, pack.Revision, installed, updated, current)
 		for _, member := range pack.Members {
 			if member.Starter {
 				fmt.Printf("Start with %s: open your agent and ask it to use %s.\n", member.Name, member.Name)
@@ -352,5 +352,5 @@ func packInstallWith(ctx context.Context, baseURL string, args []string, deps pa
 	if conflicts > 0 {
 		fmt.Println("Folders marked conflict were left untouched. Run again with --force to replace them with the pack's versions; any changes you made to those folders will be lost.")
 	}
-	return fmt.Errorf("%d of %d skills in the %s pack need attention (%d failed, %d in conflict); fix the cause and run the same command again to finish", failed+conflicts, len(pack.Members), pack.Name, failed, conflicts)
+	return fmt.Errorf("%d of %d skills in %s need attention (%d failed, %d in conflict); fix the cause and run the same command again to finish", failed+conflicts, len(pack.Members), pack.Name, failed, conflicts)
 }
