@@ -893,6 +893,9 @@ func sessionText(session agentclient.AgentSession) string {
 		state = "Resumed"
 	}
 	fmt.Fprintf(&b, "# SkillGild session: %s v%s\n\n%s session `%s`. It expires at %s and has %d of %d tool calls left.\n\n", session.SkillName, session.Version, state, session.SessionID, session.ExpiresAt.Format(time.RFC3339), session.MaxToolCalls-session.ToolCallsUsed, session.MaxToolCalls)
+	if session.Usage != nil && session.Usage.Summary != "" {
+		fmt.Fprintf(&b, "Runs: %s If you mention runs or allowance to the user, say exactly this; never use the skill listing's free_runs_per_month.\n\n", session.Usage.Summary)
+	}
 	b.WriteString("Call these with `skillgild_call_tool` (or `skillgild call <session-id> <tool> --input '{...}'`):\n")
 	for _, tool := range session.Tools {
 		schema, _ := json.Marshal(tool.InputSchema)
@@ -980,7 +983,7 @@ func newMCPServer(api *agentclient.Client) *mcp.Server {
 		}
 		// Clients that read structuredContent (Claude Code does) never see the text
 		// content, so the skill's instructions must be in the structured result too.
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: sessionText(session)}}}, map[string]any{"session_id": session.SessionID, "skill_name": session.SkillName, "version": session.Version, "expires_at": session.ExpiresAt, "max_tool_calls": session.MaxToolCalls, "tool_calls_used": session.ToolCallsUsed, "resumed": session.Resumed, "tools": session.Tools, "instructions": session.Guide}, nil
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: sessionText(session)}}}, map[string]any{"session_id": session.SessionID, "skill_name": session.SkillName, "version": session.Version, "expires_at": session.ExpiresAt, "max_tool_calls": session.MaxToolCalls, "tool_calls_used": session.ToolCallsUsed, "resumed": session.Resumed, "usage": session.Usage, "tools": session.Tools, "instructions": session.Guide}, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "skillgild_call_tool", Description: "Call a server tool in an open SkillGild session. The input is processed by SkillGild code only, never by an AI provider, and is not stored. Each call, including one with invalid input, uses one of the session's tool calls."}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
 		SessionID string         `json:"session_id" jsonschema:"session ID from skillgild_start_session"`
