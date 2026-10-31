@@ -939,7 +939,7 @@ func newMCPServer(api *agentclient.Client) *mcp.Server {
 		// reject a bare array as a malformed result.
 		return jsonToolResult(items), map[string]any{"skills": items}, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "skillgild_get_skill", Description: "Get one SkillGild skill's public listing by ID or slug: runtime_type, access tier, free runs per month, whether Pro includes it, current version, public input schema and, for hybrid_tools skills, the server tools a session offers. Use it before skillgild_run_skill or skillgild_start_session to choose the right tool and build valid input. Needs no sign-in, uses no runs, and never returns private prompts or implementation."}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
+	mcp.AddTool(server, &mcp.Tool{Name: "skillgild_get_skill", Description: "Get one SkillGild skill's public listing by ID or slug: runtime_type, access tier, the Free plan's monthly runs (free_runs_per_month, which applies only to free skills and is not this user's allowance), whether Pro includes it, current version, public input schema and, for hybrid_tools skills, the server tools a session offers. Use it before skillgild_run_skill or skillgild_start_session to choose the right tool and build valid input. Needs no sign-in, uses no runs, and never returns private prompts or implementation."}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
 		SkillID string `json:"skill_id" jsonschema:"public SkillGild skill ID or slug"`
 	}) (*mcp.CallToolResult, any, error) {
 		if args.SkillID == "" {
@@ -951,7 +951,7 @@ func newMCPServer(api *agentclient.Client) *mcp.Server {
 		}
 		return jsonToolResult(skill), skill, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "skillgild_run_skill", Description: "Run a SkillGild prompt_pipeline skill by public ID/slug and JSON input. For hybrid_tools skills use skillgild_start_session instead. The input is sent to SkillGild's configured AI provider, may consume a free allowance or paid entitlement, and generated output is returned. Never send credentials or unrelated sensitive project data."}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
+	mcp.AddTool(server, &mcp.Tool{Name: "skillgild_run_skill", Description: "Run a SkillGild prompt_pipeline skill by public ID/slug and JSON input. For hybrid_tools skills use skillgild_start_session instead. The input is sent to SkillGild's configured AI provider, may consume a free allowance or paid entitlement, and generated output is returned with usage: the user's own allowance. When mentioning runs to the user, quote usage.summary; never derive it from the skill listing. Never send credentials or unrelated sensitive project data."}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
 		SkillID string         `json:"skill_id" jsonschema:"public SkillGild skill ID or slug"`
 		Input   map[string]any `json:"input" jsonschema:"input object matching the skill's public input schema"`
 	}) (*mcp.CallToolResult, any, error) {
@@ -964,7 +964,7 @@ func newMCPServer(api *agentclient.Client) *mcp.Server {
 		}
 		return jsonToolResult(result), result, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "skillgild_start_session", Description: "Start a session for a SkillGild hybrid_tools skill. Uses one run from the user's free allowance or paid entitlement; while a session is open, calling this again returns it at no cost. Returns the skill's instructions for this agent to follow and the server tools it may call, with the session's expiry and tool call limit."}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
+	mcp.AddTool(server, &mcp.Tool{Name: "skillgild_start_session", Description: "Start a session for a SkillGild hybrid_tools skill. Uses one run from the user's free allowance or paid entitlement; while a session is open, calling this again returns it at no cost. Returns the skill's instructions for this agent to follow and the server tools it may call, with the session's expiry and tool call limit. A newly started session also returns usage: the user's own allowance for their plan (Pro is unlimited). When mentioning runs to the user, quote usage.summary; never derive it from the skill listing."}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
 		SkillID      string `json:"skill_id" jsonschema:"public SkillGild skill ID or slug"`
 		UsageContext string `json:"usage_context,omitempty" jsonschema:"foreground for a user-requested task (default); background for scheduled heartbeats or automatic polling, which do not qualify for creator earnings"`
 	}) (*mcp.CallToolResult, any, error) {

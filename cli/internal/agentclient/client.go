@@ -90,6 +90,17 @@ type AgentSession struct {
 	Resumed       bool       `json:"resumed"`
 	Guide         string     `json:"guide"`
 	Tools         []ToolInfo `json:"tools"`
+	Usage         *Usage     `json:"usage,omitempty"`
+}
+
+// Usage is the signed-in user's own allowance for a skill, set when a request used a run.
+type Usage struct {
+	Used       int       `json:"used"`
+	Limit      *int      `json:"limit"`
+	Unlimited  bool      `json:"unlimited"`
+	ResetAt    time.Time `json:"reset_at"`
+	AccessTier string    `json:"access_tier"`
+	Summary    string    `json:"summary"`
 }
 
 type ToolCallResult struct {
@@ -107,12 +118,7 @@ type RunResult struct {
 	SkillSlug   string `json:"skill_slug"`
 	Version     string `json:"version"`
 	Output      string `json:"output"`
-	Usage       struct {
-		Used       int       `json:"used"`
-		Limit      *int      `json:"limit"`
-		ResetAt    time.Time `json:"reset_at"`
-		AccessTier string    `json:"access_tier"`
-	} `json:"usage"`
+	Usage       Usage  `json:"usage"`
 }
 
 // APIError is an error answer from the SkillGild API.
