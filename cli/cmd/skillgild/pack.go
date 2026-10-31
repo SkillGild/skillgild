@@ -8,6 +8,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -32,12 +34,35 @@ const (
 	packMemberConflict                        // a folder this pack did not install, or one edited since
 )
 
-// packMemberReceipt records one installed member: what it was and the hash of its
-// SKILL.md as written, so an edit made afterwards is noticed.
+// packMemberReceipt fingerprints the entire installed folder, including scripts and
+// supporting resources. Old receipts without a tree hash require explicit replacement.
 type packMemberReceipt struct {
-	Version     string `json:"version"`
-	Fingerprint string `json:"fingerprint"`
-	FileHash    string `json:"file_hash"`
+	Version        string `json:"version"`
+	Fingerprint    string `json:"fingerprint"`
+	TreeHash       string `json:"tree_hash"`
+	LegacyFileHash string `json:"file_hash,omitempty"`
+}
+
+// Old CLI receipts verified only SKILL.md. They can be safely upgraded only for a
+// folder containing that one unchanged regular file. Supporting files remain a
+// conflict because the old record cannot prove they were not edited.
+func upgradeLegacyReceipt(dir string, receipt packMemberReceipt) packMemberReceipt {
+	if receipt.TreeHash != "" || receipt.LegacyFileHash == "" {
+		return receipt
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "SKILL.md" || !entries[0].Type().IsRegular() {
+		return receipt
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	if err != nil {
+		return receipt
+	}
+	sum := sha256.Sum256(data)
+	if hex.EncodeToString(sum[:]) == receipt.LegacyFileHash {
+		receipt.TreeHash = hashSkillTree(dir)
+	}
+	return receipt
 }
 
 // packInstallReceipt is one destination (an agent's skills folder) of a pack.
@@ -55,13 +80,12 @@ type packReceipt struct {
 }
 
 // classifyPackMember decides what to do with one member. A folder is the pack's own,
-// and safe to replace, only when a receipt exists for it and its SKILL.md still has the
-// hash recorded at install time.
+// and safe to replace, only when every installed file still matches the receipt.
 func classifyPackMember(dirExists bool, installedHash string, receipt *packMemberReceipt, member agentclient.PackMember) packMemberState {
 	if !dirExists {
 		return packMemberMissing
 	}
-	if receipt == nil || installedHash == "" || installedHash != receipt.FileHash {
+	if receipt == nil || installedHash == "" || installedHash != receipt.TreeHash {
 		return packMemberConflict
 	}
 	if receipt.Fingerprint == member.Fingerprint() {
@@ -70,13 +94,46 @@ func classifyPackMember(dirExists bool, installedHash string, receipt *packMembe
 	return packMemberOutdated
 }
 
-func hashSkillFile(dir string) string {
-	data, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+func hashSkillTree(dir string) string {
+	if info, err := os.Lstat(dir); err != nil || !info.IsDir() {
+		return ""
+	}
+	if info, err := os.Lstat(filepath.Join(dir, "SKILL.md")); err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	h := sha256.New()
+	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && !info.Mode().IsRegular() {
+			return fmt.Errorf("unsupported installed file: %s", path)
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(h, "%s\x00%d\x00", filepath.ToSlash(rel), info.Mode())
+		if info.IsDir() {
+			return nil
+		}
+		fmt.Fprintf(h, "%d\x00", info.Size())
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(h, f)
+		closeErr := f.Close()
+		return errors.Join(copyErr, closeErr)
+	})
 	if err != nil {
 		return ""
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func packReceiptPath(slug string) (string, error) {
@@ -128,7 +185,7 @@ func savePackReceipt(receipt packReceipt) error {
 type packDeps struct {
 	onboarding  func() (*onboarding, error)
 	eligibility func(ctx context.Context, baseURL, slug string) (agentclient.PackEligibility, error)
-	install     func(ctx context.Context, baseURL string, args []string) error
+	install     func(ctx context.Context, baseURL string, args []string, member agentclient.PackMember) error
 }
 
 func defaultPackDeps() packDeps {
@@ -141,8 +198,8 @@ func defaultPackDeps() packDeps {
 			}
 			return api.PackEligibility(ctx, slug)
 		},
-		install: func(ctx context.Context, baseURL string, args []string) error {
-			return installWithSetup(ctx, baseURL, args, nil)
+		install: func(ctx context.Context, baseURL string, args []string, member agentclient.PackMember) error {
+			return installSkill(ctx, baseURL, args, nil, &member)
 		},
 	}
 }
@@ -271,6 +328,8 @@ func packInstallWith(ctx context.Context, baseURL string, args []string, deps pa
 		return fmt.Errorf("read the record of earlier installs of %s: %w", slug, err)
 	}
 	record := receipt.Installs[root]
+	// A failed attempt must never retain an earlier completed revision.
+	record.Revision = ""
 	if record.Members == nil {
 		record.Members = map[string]packMemberReceipt{}
 	}
@@ -282,9 +341,15 @@ func packInstallWith(ctx context.Context, baseURL string, args []string, deps pa
 		_, statErr := os.Lstat(dir)
 		var prior *packMemberReceipt
 		if r, ok := record.Members[member.Slug]; ok {
+			r = upgradeLegacyReceipt(dir, r)
 			prior = &r
 		}
-		state := classifyPackMember(statErr == nil, hashSkillFile(dir), prior, member)
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			fmt.Printf("  failed      %s: %v\n", member.Slug, statErr)
+			failed++
+			continue
+		}
+		state := classifyPackMember(statErr == nil, hashSkillTree(dir), prior, member)
 		switch {
 		case state == packMemberCurrent && !*force:
 			fmt.Printf("  up to date  %s\n", member.Slug)
@@ -299,12 +364,18 @@ func packInstallWith(ctx context.Context, baseURL string, args []string, deps pa
 		if state != packMemberMissing {
 			installArgs = append(installArgs, "--force")
 		}
-		if err := deps.install(ctx, baseURL, installArgs); err != nil {
+		if err := deps.install(ctx, baseURL, installArgs, member); err != nil {
 			fmt.Printf("  failed      %s: %v\n", member.Slug, err)
 			failed++
 			continue
 		}
-		record.Members[member.Slug] = packMemberReceipt{Version: member.Version, Fingerprint: member.Fingerprint(), FileHash: hashSkillFile(dir)}
+		treeHash := hashSkillTree(dir)
+		if treeHash == "" {
+			fmt.Printf("  failed      %s: installed files could not be verified\n", member.Slug)
+			failed++
+			continue
+		}
+		record.Members[member.Slug] = packMemberReceipt{Version: member.Version, Fingerprint: member.Fingerprint(), TreeHash: treeHash}
 		receipt.Installs[root] = record
 		if err := savePackReceipt(receipt); err != nil {
 			fmt.Fprintf(os.Stderr, "skillgild: installed %s but could not save the install record: %v\n", member.Slug, err)
@@ -339,7 +410,7 @@ func packInstallWith(ctx context.Context, baseURL string, args []string, deps pa
 		record.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 		receipt.Installs[root] = record
 		if err := savePackReceipt(receipt); err != nil {
-			fmt.Fprintf(os.Stderr, "skillgild: could not save the install record: %v\n", err)
+			return fmt.Errorf("the skills are installed but their install record could not be saved: %w", err)
 		}
 		fmt.Printf("%s is installed (revision %s): %d new, %d updated, %d already up to date.\n", pack.Name, pack.Revision, installed, updated, current)
 		for _, member := range pack.Members {
@@ -351,6 +422,10 @@ func packInstallWith(ctx context.Context, baseURL string, args []string, deps pa
 	}
 	if conflicts > 0 {
 		fmt.Println("Folders marked conflict were left untouched. Run again with --force to replace them with the pack's versions; any changes you made to those folders will be lost.")
+	}
+	receipt.Installs[root] = record
+	if err := savePackReceipt(receipt); err != nil {
+		fmt.Fprintf(os.Stderr, "skillgild: could not save the incomplete install record: %v\n", err)
 	}
 	return fmt.Errorf("%d of %d skills in %s need attention (%d failed, %d in conflict); fix the cause and run the same command again to finish", failed+conflicts, len(pack.Members), pack.Name, failed, conflicts)
 }

@@ -197,3 +197,47 @@ func TestMCPGetSkillNeedsNoCredential(t *testing.T) {
 		t.Fatalf("API calls: %v", calls)
 	}
 }
+
+func TestMCPSearchReturnsStructuredObject(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("q") == "none" {
+			_, _ = w.Write([]byte(`{"data":{"items":[]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":{"items":[{"id":"skill-id","slug":"livecanvas","name":"LiveCanvas","access_tier":"paid","included_in_pro":true,"runtime_type":"hybrid_tools"}]}}`))
+	}))
+	defer server.Close()
+	api, err := agentclient.New(server.URL+"/v1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	if _, err := newMCPServer(api).Connect(ctx, serverTransport, nil); err != nil {
+		t.Fatal(err)
+	}
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil).Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	for query, want := range map[string]string{"canvas": `{"skills":[{`, "none": `{"skills":[]}`} {
+		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "skillgild_search_skills", Arguments: map[string]any{"query": query}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.IsError {
+			t.Fatalf("search returned an error: %+v", result.Content)
+		}
+		// MCP clients reject structuredContent that is not a JSON object.
+		structured, _ := json.Marshal(result.StructuredContent)
+		if !strings.HasPrefix(string(structured), want) {
+			t.Errorf("query %q: structuredContent = %s, want an object starting %s", query, structured, want)
+		}
+		if text := result.Content[0].(*mcp.TextContent).Text; query == "canvas" && !strings.Contains(text, `"slug": "livecanvas"`) {
+			t.Errorf("text content is missing the result:\n%s", text)
+		}
+	}
+}

@@ -343,6 +343,10 @@ func install(ctx context.Context, baseURL string, args []string) error {
 }
 
 func installWithSetup(ctx context.Context, baseURL string, args []string, onboardingFlow *onboarding) (installErr error) {
+	return installSkill(ctx, baseURL, args, onboardingFlow, nil)
+}
+
+func installSkill(ctx context.Context, baseURL string, args []string, onboardingFlow *onboarding, expected *agentclient.PackMember) (installErr error) {
 	if len(args) == 0 {
 		return fmt.Errorf("provide a skill slug")
 	}
@@ -362,6 +366,15 @@ func installWithSetup(ctx context.Context, baseURL string, args []string, onboar
 	skill, err := api.GetSkill(ctx, ref)
 	if err != nil {
 		return err
+	}
+	if expected != nil {
+		checksum := ""
+		if skill.Mirror != nil {
+			checksum = skill.Mirror.SHA256
+		}
+		if skill.Slug != expected.Slug || skill.CurrentVersion != expected.Version || skill.DistributionMode != expected.DistributionMode || checksum != expected.MirrorSHA256 || skill.AccessTier != expected.AccessTier || skill.SourceURL != expected.SourceURL || skill.SourcePath != expected.SourcePath {
+			return fmt.Errorf("%s changed since the pack was read; no files for this skill were changed. Run the pack command again", ref)
+		}
 	}
 	if !safeSkillSlug.MatchString(skill.Slug) {
 		return fmt.Errorf("the skill has an invalid install slug; no files were written")
@@ -428,6 +441,9 @@ func installWithSetup(ctx context.Context, baseURL string, args []string, onboar
 			err := installFromMirror(ctx, api, skill, skillDir, *force)
 			if err == nil {
 				return nil
+			}
+			if expected != nil {
+				return err
 			}
 			fmt.Fprintf(os.Stderr, "skillgild: the SkillGild mirror of %s could not be installed (%v); installing from %s instead.\n", skill.Slug, err, skill.SourceURL)
 		}
@@ -916,7 +932,12 @@ func newMCPServer(api *agentclient.Client) *mcp.Server {
 		if err != nil {
 			return nil, nil, err
 		}
-		return jsonToolResult(items), items, nil
+		if items == nil {
+			items = []agentclient.Skill{}
+		}
+		// MCP requires structuredContent to be an object; clients such as Claude Code
+		// reject a bare array as a malformed result.
+		return jsonToolResult(items), map[string]any{"skills": items}, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "skillgild_get_skill", Description: "Get one SkillGild skill's public listing by ID or slug: runtime_type, access tier, free runs per month, whether Pro includes it, current version, public input schema and, for hybrid_tools skills, the server tools a session offers. Use it before skillgild_run_skill or skillgild_start_session to choose the right tool and build valid input. Needs no sign-in, uses no runs, and never returns private prompts or implementation."}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
 		SkillID string `json:"skill_id" jsonschema:"public SkillGild skill ID or slug"`
@@ -944,12 +965,16 @@ func newMCPServer(api *agentclient.Client) *mcp.Server {
 		return jsonToolResult(result), result, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "skillgild_start_session", Description: "Start a session for a SkillGild hybrid_tools skill. Uses one run from the user's free allowance or paid entitlement; while a session is open, calling this again returns it at no cost. Returns the skill's instructions for this agent to follow and the server tools it may call, with the session's expiry and tool call limit."}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
-		SkillID string `json:"skill_id" jsonschema:"public SkillGild skill ID or slug"`
+		SkillID      string `json:"skill_id" jsonschema:"public SkillGild skill ID or slug"`
+		UsageContext string `json:"usage_context,omitempty" jsonschema:"foreground for a user-requested task (default); background for scheduled heartbeats or automatic polling, which do not qualify for creator earnings"`
 	}) (*mcp.CallToolResult, any, error) {
 		if args.SkillID == "" {
 			return nil, nil, errors.New("skill_id is required")
 		}
-		session, err := api.StartSession(ctx, args.SkillID)
+		if args.UsageContext == "" {
+			args.UsageContext = "foreground"
+		}
+		session, err := api.StartSessionWithContext(ctx, args.SkillID, args.UsageContext)
 		if err != nil {
 			return nil, nil, err
 		}

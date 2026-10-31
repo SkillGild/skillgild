@@ -331,8 +331,14 @@ func (c *Client) Run(ctx context.Context, ref string, input map[string]any, idem
 
 // StartSession starts, or resumes, an agent session for a hybrid skill.
 func (c *Client) StartSession(ctx context.Context, ref string) (AgentSession, error) {
+	return c.StartSessionWithContext(ctx, ref, "foreground")
+}
+func (c *Client) StartSessionWithContext(ctx context.Context, ref, usageContext string) (AgentSession, error) {
 	var session AgentSession
-	err := c.request(ctx, http.MethodPost, "/skills/"+url.PathEscape(ref)+"/sessions", map[string]any{}, true, "", &session)
+	if usageContext != "foreground" && usageContext != "background" {
+		return session, fmt.Errorf("usage_context must be foreground or background")
+	}
+	err := c.request(ctx, http.MethodPost, "/skills/"+url.PathEscape(ref)+"/sessions?usage_context="+url.QueryEscape(usageContext), map[string]any{}, true, "", &session)
 	return session, err
 }
 
@@ -393,11 +399,16 @@ type PackMember struct {
 	DistributionMode string `json:"distribution_mode"`
 	AccessTier       string `json:"access_tier"`
 	MirrorSHA256     string `json:"mirror_sha256"`
+	SourceURL        string `json:"source_url"`
+	SourcePath       string `json:"source_path"`
 	Starter          bool   `json:"starter"`
 }
 
-// Fingerprint identifies the files the member installs: the same value means the same files.
-func (m PackMember) Fingerprint() string { return m.Version + "|" + m.MirrorSHA256 }
+// Fingerprint identifies the member's published installation metadata. Non-mirrored
+// community sources still follow the upstream repository's current default branch.
+func (m PackMember) Fingerprint() string {
+	return m.DistributionMode + "|" + m.Version + "|" + m.MirrorSHA256 + "|" + m.SourceURL + "|" + m.SourcePath
+}
 
 // Pack is what `skillgild pack install` installs.
 type Pack struct {

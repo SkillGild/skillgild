@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -48,7 +50,7 @@ type installRecorder struct {
 	body   string
 }
 
-func (r *installRecorder) install(_ context.Context, _ string, args []string) error {
+func (r *installRecorder) install(_ context.Context, _ string, args []string, _ agentclient.PackMember) error {
 	r.calls = append(r.calls, args)
 	slug := args[0]
 	if r.failOn[slug] {
@@ -183,6 +185,84 @@ func TestPackUpdatesOnlyUnmodifiedInstallsOfOlderFiles(t *testing.T) {
 	}
 }
 
+func TestPackPreservesEditedSupportingFilesOnUpdate(t *testing.T) {
+	root := packEnv(t)
+	rec := &installRecorder{body: "v1 "}
+	deps := defaultPackDeps()
+	deps.install = func(ctx context.Context, base string, args []string, member agentclient.PackMember) error {
+		if err := rec.install(ctx, base, args, member); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(root, member.Slug, "helper.py"), []byte("original"), 0o644)
+	}
+	if err := packInstallWith(context.Background(), packServer(t, testPack("free"), 0, ""), []string{"launch", "--target", root}, deps); err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(root, "logo", "helper.py")
+	if err := os.WriteFile(helper, []byte("my edits"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec.calls = nil
+	err := packInstallWith(context.Background(), packServer(t, testPack("free", "1.0.0", "2.0.0"), 0, ""), []string{"launch", "--target", root}, deps)
+	if err == nil {
+		t.Fatal("an edited supporting file must block replacement")
+	}
+	if got, _ := os.ReadFile(helper); string(got) != "my edits" {
+		t.Fatalf("supporting file overwritten: %q", got)
+	}
+	if len(rec.calls) != 0 {
+		t.Fatalf("unexpected reinstalls: %v", rec.slugs())
+	}
+	receipt, err := loadPackReceipt("launch")
+	if err != nil || receipt.Installs[root].Revision != "" {
+		t.Fatalf("an incomplete update retained a completed revision: %+v, %v", receipt, err)
+	}
+}
+
+func TestLegacyReceiptOnlyAdoptsAnUnchangedSingleFile(t *testing.T) {
+	dir := t.TempDir()
+	body := []byte("original wrapper")
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(body)
+	legacy := packMemberReceipt{LegacyFileHash: hex.EncodeToString(sum[:])}
+	if got := upgradeLegacyReceipt(dir, legacy); got.TreeHash == "" {
+		t.Fatal("unchanged wrapper was not adopted")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "helper.py"), []byte("user edits"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := upgradeLegacyReceipt(dir, legacy); got.TreeHash != "" {
+		t.Fatal("supporting files cannot be verified by a legacy receipt")
+	}
+	if err := os.Remove(filepath.Join(dir, "helper.py")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("edited wrapper"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := upgradeLegacyReceipt(dir, legacy); got.TreeHash != "" {
+		t.Fatal("edited wrapper was adopted")
+	}
+}
+
+func TestPackRejectsChangedMemberBeforeWriting(t *testing.T) {
+	root := packEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"data": agentclient.Skill{Slug: "logo", CurrentVersion: "2.0.0", DistributionMode: "hosted_public", AccessTier: "free"}})
+	}))
+	defer srv.Close()
+	expected := &agentclient.PackMember{Slug: "logo", Version: "1.0.0", DistributionMode: "hosted_public", AccessTier: "free"}
+	err := installSkill(context.Background(), srv.URL, []string{"logo", "--target", root}, nil, expected)
+	if err == nil || !strings.Contains(err.Error(), "changed since the pack was read") {
+		t.Fatalf("member drift was not rejected: %v", err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("target was created before validation: %v", err)
+	}
+}
+
 func TestPackResumesAfterAPartialFailure(t *testing.T) {
 	root := packEnv(t)
 	base := packServer(t, testPack("free"), 0, "")
@@ -250,8 +330,8 @@ func TestUnavailablePackInstallsNothing(t *testing.T) {
 
 func TestClassifyPackMember(t *testing.T) {
 	member := agentclient.PackMember{Version: "2.0.0", MirrorSHA256: "aa"}
-	current := &packMemberReceipt{Fingerprint: member.Fingerprint(), FileHash: "h"}
-	older := &packMemberReceipt{Fingerprint: "1.0.0|aa", FileHash: "h"}
+	current := &packMemberReceipt{Fingerprint: member.Fingerprint(), TreeHash: "h"}
+	older := &packMemberReceipt{Fingerprint: "1.0.0|aa", TreeHash: "h"}
 	cases := []struct {
 		name    string
 		exists  bool
