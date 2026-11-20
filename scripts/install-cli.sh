@@ -96,6 +96,9 @@ case ":${PATH}:" in
     ;;
 esac
 say ""
-say "Next: skillgild login"
-say "Then register the MCP server with your agent, e.g.:"
-say "  claude mcp add --scope user skillgild -- $install_dir/skillgild mcp"
+say "Next: skillgild setup"
+say "It finds your coding agent, signs you in and registers the MCP server."
+say ""
+say "To name the agent yourself:"
+say "  skillgild setup --agent claude-code"
+say "  (also codex, cursor, gemini-cli, antigravity, antigravity-cli)"

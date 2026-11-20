@@ -65,6 +65,9 @@ if (-not (($userPath -split ";") -contains $installDir)) {
   Write-Host "Added $installDir to your user PATH. Open a new terminal for other apps to see it."
 }
 Write-Host ""
-Write-Host "Next: skillgild login"
-Write-Host "Then register the MCP server with your agent, e.g.:"
-Write-Host "  claude mcp add --scope user skillgild -- `"$exe`" mcp"
+Write-Host "Next: skillgild setup"
+Write-Host "It finds your coding agent, signs you in and registers the MCP server."
+Write-Host ""
+Write-Host "To name the agent yourself:"
+Write-Host "  skillgild setup --agent claude-code"
+Write-Host "  (also codex, cursor, gemini-cli, antigravity, antigravity-cli)"
